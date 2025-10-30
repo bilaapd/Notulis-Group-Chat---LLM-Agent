@@ -102,10 +102,17 @@ Terminal akan menampilkan QR code seperti ini untuk login.
 Berikut adalah contoh penggunaan fitur-fitur utama bot di dalam grup WhatsApp.
 
 **Demo Fitur `!register` dan `!help`:**
-`[Screenshot percakapan !help dan !register]`
+<img width="790" height="465" alt="image" src="https://github.com/user-attachments/assets/1b153939-6add-4a71-bd96-5da5d131fc70" />
+<img width="602" height="547" alt="image" src="https://github.com/user-attachments/assets/b6cdf4ab-9a32-48ac-b210-93891d5ee52d" />
+
+**Demo Fitur `!rangkum` dan `!mulaiRapat`**
+
 
 **Demo Fitur `!tugas` (dengan output Google Sheets):**
-`[Screenshot percakapan !tugas dan screenshot Google Sheet yang terisi]`
+<img width="508" height="541" alt="image" src="https://github.com/user-attachments/assets/77842eae-ec6e-4956-8ddb-93a978b167b3" />
+<img width="738" height="130" alt="image" src="https://github.com/user-attachments/assets/dafa6fd4-d6ce-4be6-8a80-ff9d54e39ab4" />
 
 **Demo Fitur `!voting` (Membuat Poll Otomatis):**
-`[GIF yang menunjukkan obrolan perdebatan, lalu bot membuat Poll interaktif]`
+https://github.com/user-attachments/assets/3f6c45cd-87f6-4bbf-9e0f-cdbf87bbd5e8
+
+
