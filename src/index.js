@@ -1,14 +1,24 @@
-// WAJIB ADA DI BARIS PALING ATAS
-// Untuk membaca file .env
 require('dotenv').config(); 
 
 const { Client, LocalAuth, Poll } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// Impor "otak" kita
 const { getLLMResponse } = require('./llm');
+const { loadUserRegistry, registerUser, logToSheet, logSummaryToSheet } = require('./sheetsTool');
+const { log, error } = require('./logger');
 
-console.log("Mulai menjalankan bot...");
+// Formatting
+function formatForWA(text) {
+    return text.replace(/\*\*/g, '*');
+}
+
+function formatForSheets(text) {
+    return text.replace(/\*\*/g, ''); 
+}
+
+let userCache = {};
+
+log("Mulai menjalankan bot...");
 
 const client = new Client({
     authStrategy: new LocalAuth() 
@@ -19,11 +29,43 @@ client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => {
-    console.log('Bot sudah siap dan terhubung!');
+// Load user from google spreadsheet
+client.on('ready', async () => { 
+    log('Bot sudah siap dan terhubung!');
+
+    console.log("Memuat memori (User Cache)...");
+    userCache = await loadUserRegistry();
+    log(`Memori berhasil dimuat! ${Object.keys(userCache).length} user terdaftar.`);
 });
 
-// ... (kode di atas, 'dotenv', 'whatsapp-web.js', 'llm.js', dll. biarkan saja) ...
+// Processing the chat history
+async function buildChatHistory(chat, limit) {
+    try {
+        const messages = await chat.fetchMessages({ limit: limit + 1 });
+
+        const promises = messages
+            .slice(0, -1)
+            .map(async (msg) => {
+                const contact = await msg.getContact();
+                const userId = msg.author || msg.from;
+
+                const senderName = userCache[userId] || contact.pushname || contact.name || userId;
+                return `${senderName}: ${msg.body}`;
+            });
+
+        const chatHistory = await Promise.all(promises);
+
+        if (chatHistory.length === 0) {
+            return null; 
+        }
+
+        return chatHistory.join('\n'); 
+
+    } catch (error) {
+        error("Error di buildChatHistory:", error);
+        return null; 
+    }
+}
 
 client.on('message', async (message) => {
     const chat = await message.getChat();
@@ -31,62 +73,144 @@ client.on('message', async (message) => {
     if (chat.isGroup) {
         const userMessage = message.body;
 
-        // --- FITUR LAMA: TANYA JAWAB (BIARKAN) ---
-        if (userMessage.startsWith('!tanya ')) {
-            console.log("Menerima perintah !tanya");
+        // Fitur help
+        if (userMessage === '!help') {
+            log("Menerima perintah !help");
+
+            const helpMessage = `
+Halo! Saya *Notulis Agent*, asisten rapatmu. 🤖
+
+Untuk awalan penggunaan, *tolong register namamu dulu ya!*
+Ini penting agar namamu dikenali dengan benar di dalam rangkuman dan daftar tugas.
+
+Ketik: \`!register <NamaPanggilanKamu>\`
+Contoh: \`!register Budi\`
+
+---
+
+Setelah kamu terdaftar, ini adalah daftar perintah yang bisa kamu gunakan:
+
+*FITUR UTAMA (NOTULENSI)*
+1. *!rangkum <jumlah>*
+   Merangkum <jumlah> pesan terakhir.
+   ➤ Hasilnya juga otomatis diarsipkan ke *Google Sheets*.
+   Contoh: \`!rangkum 50\`
+
+2. *!tugas <jumlah>*
+   Mengekstrak daftar tugas (action items) dari <jumlah> pesan terakhir.
+   ➤ Otomatis disimpan ke *Google Sheets*.
+   Contoh: \`!tugas 30\`
+
+3. *!voting <jumlah>*
+   Membuat poll/voting otomatis dari <jumlah> pesan terakhir yang berisi perdebatan.
+   Contoh: \`!voting 20\`
+
+*FITUR LAINNYA*
+4. *!tanya <pertanyaan>*
+   Tanya apa saja ke "otak" LLM saya.
+   Contoh: \`!tanya apa itu blockchain?\`
+
+5. *!help*
+   Menampilkan pesan bantuan ini.
+    `;
+            await message.reply(helpMessage.trim()); 
+        }
+        
+        // For regist user
+        else if (userMessage.startsWith('!register ')) {
+            log("Menerima perintah !register");
+
+            const userName = userMessage.substring(10).trim();
+            const userId = message.author || message.from;
+
+            if (!userName) {
+                await message.reply("Format salah. Coba `!register NamaPanggilanKamu` (tanpa spasi).");
+                return;
+            }
+
+            await message.reply(`Mencoba mendaftarkan kamu sebagai *${userName}*...`);
+
+            const success = await registerUser(userId, userName);
+
+            if (success) {
+                userCache[userId] = userName; 
+                await message.reply(`Berhasil! Mulai sekarang, kamu akan dipanggil *${userName}* oleh bot.`);
+            } else {
+                await message.reply("Maaf, terjadi kesalahan saat mendaftar ke database rahasia.");
+            }
+        }
+
+        else if (userMessage.startsWith('!debug_history ')) {
+            log("Menerima perintah DEBUG !debug_history");
+            
+            const limitStr = userMessage.substring(15).trim();
+            const limit = parseInt(limitStr);
+
+            if (isNaN(limit) || limit <= 0 || limit > 50) {
+                await message.reply("Format salah. Coba `!debug_history 5` (maks 50).");
+                return;
+            }
+
+            await message.reply(`Siap, mengambil transkrip mentah ${limit} pesan terakhir... 🛠️`);
+            
+            const historyText = await buildChatHistory(chat, limit);
+
+            if (!historyText) {
+                await message.reply("Tidak ada history untuk ditampilkan.");
+                return; 
+            }
+
+            const debugReply = `
+--- HASIL TRANSKRIP MENTAH ---
+\`\`\`${historyText}\`\`\`
+            `;
+            
+            await message.reply(debugReply.trim());
+        }
+        
+        else if (userMessage.startsWith('!tanya ')) {
+            log("Menerima perintah !tanya");
             const question = userMessage.substring(7);
             message.reply('Otak saya sedang berpikir... 🧠 Mohon tunggu sebentar.');
             const answer = await getLLMResponse(question);
-            message.reply(answer);
+
+            const formattedAnswer = formatForWA(answer);
+            await message.reply(formattedAnswer);
         }
-
-        // --- FITUR BARU: MEMBACA HISTORY (TOOL #1) ---
+        
+        // Summarize 
         else if (userMessage.startsWith('!rangkum ')) {
-            console.log("Menerima perintah !rangkum");
+            log("Menerima perintah !rangkum");
 
-            // Ambil angkanya, misal "!rangkum 50" -> ambil "50"
             const limitStr = userMessage.substring(9); 
             const limit = parseInt(limitStr);
 
-            // Validasi input
             if (isNaN(limit) || limit <= 0 || limit > 100) {
                 message.reply("Format salah. Coba `!rangkum 50` (maks 100).");
-                return; // Hentikan eksekusi
+                return; 
             }
 
             await message.reply(`Siap! Saya akan baca ${limit} pesan terakhir... 📜`);
 
             try {
-                // Ini dia "TOOL" nya!
-                // fetchMessages mengambil pesan, termasuk pesan trigger. 
-                // Kita ambil limit + 1 agar pesan "!rangkum" tidak ikut.
-                const messages = await chat.fetchMessages({ limit: limit + 1 });
+                const historyText = await buildChatHistory(chat, limit);
 
-                // Kita ambil semua pesan KECUALI pesan trigger (!rangkum)
-                const chatHistory = messages
-                    .slice(0, -1) // Hapus pesan terakhir (pesan "!rangkum")
-                    .map(msg => `${msg.author || msg.from}: ${msg.body}`); // Format jadi "Pengirim: Isi Pesan"
+                if (!historyText) {
+                    await message.reply("Tidak ada pesan untuk dirangkum (selain perintahmu).");
+                    return;
+                }
 
-                const historyText = chatHistory.join('\n');
-
-                // DEBUG: Tampilkan di konsol
                 console.log("--- HISTORY YANG BERHASIL DIBACA ---");
                 console.log(historyText);
                 console.log("-----------------------------------");
 
-                // Respon sukses (BELUM DIKIRIM KE LLM)
-                // --- LOGIKA BARU UNTUK MERANGKUM ---
-
-                // Validasi jika tidak ada chat (misal grup baru)
                 if (chatHistory.length === 0) {
                     await message.reply("Tidak ada pesan untuk dirangkum (selain perintahmu).");
-                    return; // Hentikan eksekusi
+                    return; 
                 }
 
-                console.log("Mengirim transkrip ke LLM untuk dirangkum...");
+                log("Mengirim transkrip ke LLM untuk dirangkum...");
 
-                // Ini adalah "Prompt Engineering" pertama kita!
-                // Kita beritahu LLM perannya dan apa yang harus dilakukan.
                 const summaryPrompt = `
                 Anda adalah Notulis Rapat yang cerdas dan efisien. 
                 Berikut adalah transkrip obrolan dari grup WhatsApp. Pesan yang lebih baru ada di bagian bawah.
@@ -104,27 +228,107 @@ client.on('message', async (message) => {
                 RANGKUMAN POIN PENTING:
                 `;
 
-                // Panggil "otak" dengan prompt yang sudah kita buat
                 const summary = await getLLMResponse(summaryPrompt);
 
-                // Kirim hasil rangkuman
-                await message.reply(summary);
+                // Formatting summary
+                const formattedSummaryWA = formatForWA(summary);
+                const formattedSummarySheets = formatForSheets(summary);
 
-                // --- AKHIR DARI LOGIKA BARU ---
+                // Send to Spreadsheet
+                const logged = await logSummaryToSheet(formattedSummarySheets);
+                let finalReply = formattedSummaryWA; 
+
+                if (logged) {
+                    finalReply += "\n\n(✅ Berhasil diarsipkan ke Google Sheets!) \nLink Google Sheets: https://docs.google.com/spreadsheets/d/1q3nesDRyfdz9mAhk4o574RKi9BHzGeD7IhArCyV56Xs/edit?usp=sharing";
+                } else {
+                    finalReply += "\n\n(⚠️ Gagal mengarsipkan ke Google Sheets.)";
+                }
+            
+                await message.reply(finalReply);
 
             } catch (error) {
-                console.error("Error saat fetchMessages:", error);
+                error("Error saat fetchMessages:", error);
                 message.reply("Maaf, saya gagal membaca riwayat chat.");
             }
         }
-        // --- FITUR PAMUNGKAS: MEMBUAT POLL (TOOL #3) ---
-        else if (userMessage.startsWith('!voting ')) {
-            console.log("Menerima perintah !voting");
 
-            const limitStr = userMessage.substring(8); // potong '!voting '
+        else if (userMessage.startsWith('!tugas ')) {
+            log("Menerima perintah !tugas");
+
+            const limitStr = userMessage.substring(7); 
             const limit = parseInt(limitStr);
 
-            if (isNaN(limit) || limit <= 0 || limit > 50) { // Batasi 50 agar tidak terlalu berat
+            if (isNaN(limit) || limit <= 0 || limit > 100) {
+                await message.reply("Format salah. Coba `!tugas 30` (maks 100).");
+                return; 
+            }
+
+            await message.reply(`Siap! Saya cari *daftar tugas* dari ${limit} pesan terakhir... 📝`);
+
+            try {
+                const historyText = await buildChatHistory(chat, limit);
+
+                if (!historyText) {
+                    await message.reply("Tidak ada pesan untuk dirangkum (selain perintahmu).");
+                    return; 
+                }
+
+                if (chatHistory.length === 0) {
+                    await message.reply("Tidak ada pesan untuk dianalisis.");
+                    return; 
+                }
+
+                log("Mengirim transkrip ke LLM untuk ekstraksi TUGAS...");
+
+                const actionItemPrompt = `
+                Anda adalah asisten Notulis Rapat yang sangat teliti.
+                Fokus Anda HANYA pada TUGAS.
+
+                TRANSKRIP OBROLAN:
+                ---
+                ${historyText}
+                ---
+
+                Tugas Anda:
+                Ekstrak SEMUA action items (tugas) dari transkrip di atas.
+                Tuliskan siapa yang bertanggung jawab dan apa tugasnya.
+                Format jawaban sebagai daftar poin (bullet points).
+                Jika TIDAK ADA TUGAS, jawab "Tidak ada tugas atau action item yang ditemukan."
+
+                DAFTAR TUGAS:
+                `;
+
+                const tasks = await getLLMResponse(actionItemPrompt);
+                const formattedTasks = formatForWA(tasks);
+                const formattedTasksSheets = formatForSheets(tasks);
+
+                // Send to Spreadsheet
+                const logged = await logToSheet(formattedTasksSheets);
+
+                let finalReply = formattedTasks; 
+
+                if (logged) {
+                    finalReply += "\n\n(✅ Berhasil dicatat ke Google Sheets!) \nLink Google Sheets: https://docs.google.com/spreadsheets/d/1q3nesDRyfdz9mAhk4o574RKi9BHzGeD7IhArCyV56Xs/edit?usp=sharing";
+                } else {
+                    finalReply += "\n\n(⚠️ Gagal mencatat ke Google Sheets.)";
+                }
+
+                await message.reply(finalReply);
+
+            } catch (error) {
+                error("Error saat fetchMessages (di !tugas):", error);
+                await message.reply("Maaf, saya gagal menganalisis tugas dari riwayat chat.");
+            }
+        }
+
+        // Voting: create poll on whatsapp
+        else if (userMessage.startsWith('!voting ')) {
+            log("Menerima perintah !voting");
+
+            const limitStr = userMessage.substring(8); 
+            const limit = parseInt(limitStr);
+
+            if (isNaN(limit) || limit <= 0 || limit > 50) { 
                 await message.reply("Format salah. Coba `!voting 20` (maks 50).");
                 return; 
             }
@@ -132,23 +336,20 @@ client.on('message', async (message) => {
             await message.reply(`Oke! Saya analisis ${limit} pesan terakhir untuk dibuat *voting*... 🔍`);
 
             try {
-                const messages = await chat.fetchMessages({ limit: limit + 1 });
+                const historyText = await buildChatHistory(chat, limit);
 
-                const chatHistory = messages
-                    .slice(0, -1) 
-                    .map(msg => `${msg.author || msg.from}: ${msg.body}`);
+            if (!historyText) {
+                await message.reply("Tidak ada pesan untuk dirangkum (selain perintahmu).");
+                return; 
+            }
 
-                const historyText = chatHistory.join('\n');
-
-                if (chatHistory.length < 3) { // Butuh minimal 3 pesan untuk didiskusikan
+                if (chatHistory.length < 3) { 
                     await message.reply("Tidak ada diskusi yang cukup untuk dibuat voting.");
                     return; 
                 }
 
-                console.log("Mengirim transkrip ke LLM untuk ekstraksi VOTING...");
+                log("Mengirim transkrip ke LLM untuk ekstraksi VOTING...");
 
-                // Ini adalah "Prompt Engineering" PALING CANGGIH kita.
-                // Kita akan memaksa LLM mengembalikan JSON!
                 const proposalPrompt = `
                 Anda adalah Notulis Rapat yang bisa mengambil keputusan.
                 Baca transkrip obrolan di bawah ini.
@@ -175,64 +376,57 @@ client.on('message', async (message) => {
                 BERIKAN HANYA JSON STRING:
                 `;
 
-                // Panggil "otak" dengan prompt VOTING
+                // Get response (json type)
                 const llmJsonOutput = await getLLMResponse(proposalPrompt);
 
-                console.log("Menerima output JSON dari LLM:", llmJsonOutput);
+                log("Menerima output JSON dari LLM:", llmJsonOutput);
 
-                // --- BAGIAN BARU: PARSING JSON & MEMBUAT POLL ---
                 try {
-                    // Bersihkan output LLM (kadang LLM menambah ```json ... ```)
                     let cleanedJson = llmJsonOutput.replace(/```json/g, '').replace(/```/g, '').trim();
 
                     const pollData = JSON.parse(cleanedJson);
 
-                    // Cek jika LLM bilang error
                     if (pollData.error) {
                         await message.reply(pollData.error);
                         return;
                     }
 
-                    // Validasi data
                     if (!pollData.question || !pollData.options || pollData.options.length < 2) {
                         throw new Error("Format JSON dari LLM tidak valid.");
                     }
-
-                    // INI DIA "TANGAN" AGENT-NYA!
-                    // Kita buat Poll sungguhan
+                    
+                    // Create poll
                     const poll = new Poll(pollData.question, pollData.options);
 
-                    await message.reply(poll); // Kirim poll ke grup
+                    await message.reply(poll); 
 
                 } catch (parseError) {
-                    console.error("Gagal parse JSON dari LLM:", parseError, "Output LLM:", llmJsonOutput);
+                    error("Gagal parse JSON dari LLM:", parseError, "Output LLM:", llmJsonOutput);
                     await message.reply("Otak saya bingung... Saya tidak bisa mengubah diskusi itu menjadi poll.");
                 }
-                // --- AKHIR BAGIAN PARSING ---
 
             } catch (error) {
-                console.error("Error saat fetchMessages (di !voting):", error);
+                error("Error saat fetchMessages (di !voting):", error);
                 await message.reply("Maaf, saya gagal menganalisis voting dari riwayat chat.");
             }
         }
 
+        // Debug for creating polling on Whatsapp
         else if (userMessage === '!testpoll') {
-            console.log("Menerima perintah DEBUG !testpoll");
+            log("Menerima perintah DEBUG !testpoll");
 
             try {
                 await message.reply("Siap, mengirim poll tes...");
 
-                // Kita buat poll palsu (hardcoded)
                 const testPoll = new Poll(
-                    "Ini Judul Tes Poll",     // Judul
-                    ["Opsi A", "Opsi B", "Opsi C"] // Pilihan
+                    "Ini Judul Tes Poll",
+                    ["Opsi A", "Opsi B", "Opsi C"]
                 );
 
-                // Langsung kirim
                 await message.reply(testPoll);
 
             } catch (error) {
-                console.error("Error saat !testpoll:", error);
+                error("Error saat !testpoll:", error);
                 await message.reply("Gagal mengirim poll tes.");
             }
         }

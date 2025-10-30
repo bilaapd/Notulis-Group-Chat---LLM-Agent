@@ -12,6 +12,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^17.2.3",
+    "googleapis": "^164.1.0",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.23.0"
   }

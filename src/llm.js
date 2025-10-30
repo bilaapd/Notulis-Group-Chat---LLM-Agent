@@ -1,14 +1,9 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Inisialisasi Gemini Client
+// GenAI API and model version
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-/**
- * Fungsi untuk mendapatkan respon sederhana dari LLM.
- * @param {string} prompt Teks input dari user.
- * @returns {Promise<string>} Respon teks dari LLM.
- */
 async function getLLMResponse(prompt) {
     console.log("Menerima prompt untuk LLM:", prompt);
     try {
@@ -23,5 +18,4 @@ async function getLLMResponse(prompt) {
     }
 }
 
-// Ekspor fungsi agar bisa dipakai di index.js
 module.exports = { getLLMResponse };
