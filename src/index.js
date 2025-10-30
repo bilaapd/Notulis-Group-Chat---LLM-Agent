@@ -340,7 +340,7 @@ Perintah utama saya sekarang "pintar". Mereka akan bekerja secara berbeda tergan
                     let finalReply = `*--- RANGKUMAN RAPAT ---*\n\nTotal ${meetingMessages.length} pesan dianalisis.\n\n${formattedSummaryWA}`;
 
                     if (logged) {
-                        finalReply += "\n\n(✅ Berhasil diarsipkan ke Google Sheets!) \nLink Google Sheets: [link kamu]";
+                        finalReply += "\n\n(✅ Berhasil diarsipkan ke Google Sheets!) \nLink Google Sheets: [https://docs.google.com/spreadsheets/d/1q3nesDRyfdz9mAhk4o574RKi9BHzGeD7IhArCyV56Xs/edit?usp=sharing]";
                     } else {
                         finalReply += "\n\n(⚠️ Gagal mengarsipkan ke Google Sheets.)";
                     }
@@ -497,7 +497,7 @@ Perintah utama saya sekarang "pintar". Mereka akan bekerja secara berbeda tergan
                     let finalReply = formattedTasksWA;
 
                     if (logged) {
-                        finalReply += "\n\n(✅ Berhasil dicatat ke Google Sheets!) \nLink Google Sheets: [link kamu]";
+                        finalReply += "\n\n(✅ Berhasil dicatat ke Google Sheets!) \nLink Google Sheets: [https://docs.google.com/spreadsheets/d/1q3nesDRyfdz9mAhk4o574RKi9BHzGeD7IhArCyV56Xs/edit?usp=sharing]";
                     } else {
                         finalReply += "\n\n(⚠️ Gagal mencatat ke Google Sheets.)";
                     }
